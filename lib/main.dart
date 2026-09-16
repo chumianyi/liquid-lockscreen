@@ -7,11 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('zh_CN', null);
-  // 完全隐藏状态栏和导航栏，沉浸式锁屏
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -50,7 +50,6 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
   double _dragOffset = 0;
   double _screenHeight = 0;
   bool _isUnlocking = false;
-  bool _isUnlocked = false;
   late AnimationController _snapController;
   Animation<double> _snapAnim = const AlwaysStoppedAnimation(0);
 
@@ -106,7 +105,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
   }
 
   void _onDragUpdate(DragUpdateDetails d) {
-    if (_isUnlocking || _isUnlocked) return;
+    if (_isUnlocking) return;
     setState(() {
       _dragOffset -= d.delta.dy;
       if (_dragOffset < 0) _dragOffset = 0;
@@ -116,7 +115,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
   }
 
   void _onDragEnd(DragEndDetails d) {
-    if (_isUnlocking || _isUnlocked) return;
+    if (_isUnlocking) return;
     final threshold = _screenHeight * 0.15;
     if (_dragOffset >= threshold) {
       _unlock();
@@ -142,8 +141,31 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
       CurvedAnimation(parent: _snapController, curve: Curves.easeInOut),
     );
     _snapController.forward(from: 0).whenComplete(() {
-      if (mounted) setState(() => _isUnlocked = true);
+      // 解锁后直接退出回桌面
+      SystemNavigator.pop();
     });
+  }
+
+  Future<void> _openPhone() async {
+    final Uri phoneUri = Uri(scheme: 'tel');
+    if (await canLaunchUrl(phoneUri)) {
+      await launchUrl(phoneUri);
+    }
+  }
+
+  Future<void> _openCamera() async {
+    final Uri cameraUri = Uri(scheme: 'googlecamera');
+    final Uri fallbackUri = Uri.parse('geo:0,0?q=0,0');
+    // Try camera intent
+    try {
+      await launchUrl(cameraUri);
+    } catch (_) {
+      // Fallback: try opening camera via intent
+      final Uri camera2 = Uri.parse('intent://camera#Intent;action=android.media.action.IMAGE_CAPTURE;end');
+      if (await canLaunchUrl(camera2)) {
+        await launchUrl(camera2);
+      }
+    }
   }
 
   @override
@@ -152,10 +174,6 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     final fade = (_dragOffset / (_screenHeight * 0.25)).clamp(0.0, 1.0);
     final timeStr = DateFormat('HH:mm').format(_now);
     final dateStr = DateFormat('M月d日 EEEE', 'zh_CN').format(_now);
-
-    if (_isUnlocked) {
-      return _buildHomeScreen();
-    }
 
     return Scaffold(
       body: Container(
@@ -168,7 +186,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
               child: Image.asset('assets/wallpaper.webp', fit: BoxFit.cover),
             ),
 
-            // 全局液态玻璃覆盖（不是卡片，是整屏微妙效果）
+            // 全局液态玻璃微妙覆盖
             Positioned.fill(
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 0.5, sigmaY: 0.5),
@@ -188,7 +206,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
               ),
             ),
 
-            // 充电粒子（全局，从底部飘起）
+            // 充电粒子
             if (_isCharging)
               Positioned.fill(
                 child: CustomPaint(
@@ -196,14 +214,14 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                 ),
               ),
 
-            // 内容层（上滑跟随）
+            // 内容层
             Transform.translate(
               offset: Offset(0, -_dragOffset),
               child: Opacity(
                 opacity: (1.0 - fade).clamp(0.0, 1.0),
                 child: Stack(
                   children: [
-                    // 时间居中偏上
+                    // 时间
                     Positioned(
                       top: MediaQuery.of(context).padding.top + 80,
                       left: 0,
@@ -218,9 +236,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                               color: Colors.white,
                               letterSpacing: 3,
                               height: 1.0,
-                              shadows: [
-                                Shadow(blurRadius: 20, color: Colors.black26),
-                              ],
+                              shadows: [Shadow(blurRadius: 20, color: Colors.black26)],
                             ),
                           ),
                           const SizedBox(height: 6),
@@ -228,42 +244,53 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                             dateStr,
                             style: TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.w400,
                               color: Colors.white.withOpacity(0.8),
                               letterSpacing: 2,
                             ),
                           ),
-                          // 充电电量
                           if (_isCharging) ...[
                             const SizedBox(height: 16),
-                            Text(
-                              '⚡ $_batteryLevel%',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                color: Colors.white,
-                                letterSpacing: 1,
-                              ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _LightningIcon(size: 18, color: Colors.white),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '$_batteryLevel%',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    color: Colors.white,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ],
                       ),
                     ),
 
-                    // 底部电话图标（左下角，用文字不用矢量）
+                    // 电话按钮（左下角）
                     Positioned(
                       left: 30,
                       bottom: 40,
-                      child: const Text('📞', style: TextStyle(fontSize: 36)),
+                      child: _LockIconButton(
+                        icon: _PhoneIcon(size: 28, color: Colors.white),
+                        onTap: _openPhone,
+                      ),
                     ),
 
-                    // 底部相机图标（右下角）
+                    // 相机按钮（右下角）
                     Positioned(
                       right: 30,
                       bottom: 40,
-                      child: const Text('📷', style: TextStyle(fontSize: 36)),
+                      child: _LockIconButton(
+                        icon: _CameraIcon(size: 28, color: Colors.white),
+                        onTap: _openCamera,
+                      ),
                     ),
 
-                    // 底部上滑提示
+                    // 上滑提示
                     Positioned(
                       bottom: 20,
                       left: 0,
@@ -271,15 +298,8 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            '⌃',
-                            style: TextStyle(
-                              fontSize: 28,
-                              color: Colors.white.withOpacity(0.6),
-                              height: 0.8,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
+                          _ArrowUpIcon(size: 24, color: Colors.white.withOpacity(0.6)),
+                          const SizedBox(height: 4),
                           Text(
                             '上滑解锁',
                             style: TextStyle(
@@ -309,58 +329,246 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
       ),
     );
   }
+}
 
-  Widget _buildHomeScreen() {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF1a1a2e), Color(0xFF16213e)],
-          ),
+/// 可点击图标按钮
+class _LockIconButton extends StatelessWidget {
+  final Widget icon;
+  final VoidCallback onTap;
+  const _LockIconButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.white.withOpacity(0.12),
         ),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text(
-                '🔓',
-                style: TextStyle(fontSize: 64),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '已解锁',
-                style: TextStyle(fontSize: 24, color: Colors.white),
-              ),
-              const SizedBox(height: 40),
-              GestureDetector(
-                onTap: () => setState(() {
-                  _isUnlocked = false;
-                  _isUnlocking = false;
-                  _dragOffset = 0;
-                }),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: const Text(
-                    '回到锁屏',
-                    style: TextStyle(color: Colors.white, fontSize: 16),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        child: Center(child: icon),
       ),
     );
   }
 }
 
-/// 充电粒子：从底部向上飘
+/// 电话图标（手绘，非emoji非Material字体）
+class _PhoneIcon extends StatelessWidget {
+  final double size;
+  final Color color;
+  const _PhoneIcon({required this.size, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size(size, size),
+      painter: _PhoneIconPainter(color: color),
+    );
+  }
+}
+
+class _PhoneIconPainter extends CustomPainter {
+  final Color color;
+  _PhoneIconPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    final path = Path();
+    // Simplified phone handset shape
+    path.moveTo(size.width * 0.25, size.height * 0.2);
+    path.quadraticBezierTo(
+      size.width * 0.15, size.height * 0.3,
+      size.width * 0.2, size.height * 0.5,
+    );
+    path.quadraticBezierTo(
+      size.width * 0.25, size.height * 0.7,
+      size.width * 0.4, size.height * 0.8,
+    );
+    path.quadraticBezierTo(
+      size.width * 0.6, size.height * 0.95,
+      size.width * 0.8, size.height * 0.85,
+    );
+    path.quadraticBezierTo(
+      size.width * 0.9, size.height * 0.8,
+      size.width * 0.85, size.height * 0.7,
+    );
+    canvas.drawPath(path, paint);
+
+    // Receiver
+    canvas.drawCircle(
+      Offset(size.width * 0.25, size.height * 0.25),
+      size.width * 0.06,
+      Paint()..color = color,
+    );
+    // Mic
+    canvas.drawCircle(
+      Offset(size.width * 0.75, size.height * 0.78),
+      size.width * 0.06,
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PhoneIconPainter old) => old.color != color;
+}
+
+/// 相机图标
+class _CameraIcon extends StatelessWidget {
+  final double size;
+  final Color color;
+  const _CameraIcon({required this.size, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size(size, size),
+      painter: _CameraIconPainter(color: color),
+    );
+  }
+}
+
+class _CameraIconPainter extends CustomPainter {
+  final Color color;
+  _CameraIconPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    // Camera body
+    final bodyRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        size.width * 0.1, size.height * 0.25,
+        size.width * 0.8, size.height * 0.6,
+      ),
+      const Radius.circular(4),
+    );
+    canvas.drawRRect(bodyRect, paint);
+
+    // Top bump
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(
+          size.width * 0.35, size.height * 0.15,
+          size.width * 0.3, size.height * 0.15,
+        ),
+        const Radius.circular(3),
+      ),
+      paint,
+    );
+
+    // Lens
+    canvas.drawCircle(
+      Offset(size.width * 0.5, size.height * 0.55),
+      size.width * 0.18,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CameraIconPainter old) => old.color != color;
+}
+
+/// 上箭头
+class _ArrowUpIcon extends StatelessWidget {
+  final double size;
+  final Color color;
+  const _ArrowUpIcon({required this.size, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size(size, size),
+      painter: _ArrowUpPainter(color: color),
+    );
+  }
+}
+
+class _ArrowUpPainter extends CustomPainter {
+  final Color color;
+  _ArrowUpPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+
+    final path = Path();
+    path.moveTo(size.width * 0.5, size.height * 0.15);
+    path.lineTo(size.width * 0.2, size.height * 0.55);
+    path.moveTo(size.width * 0.5, size.height * 0.15);
+    path.lineTo(size.width * 0.8, size.height * 0.55);
+    canvas.drawPath(path, paint);
+
+    // Line down
+    final linePaint = Paint()
+      ..color = color.withOpacity(0.5)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(size.width * 0.5, size.height * 0.2),
+      Offset(size.width * 0.5, size.height * 0.85),
+      linePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ArrowUpPainter old) => old.color != color;
+}
+
+/// 闪电图标（充电）
+class _LightningIcon extends StatelessWidget {
+  final double size;
+  final Color color;
+  const _LightningIcon({required this.size, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size(size, size),
+      painter: _LightningPainter(color: color),
+    );
+  }
+}
+
+class _LightningPainter extends CustomPainter {
+  final Color color;
+  _LightningPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final path = Path();
+    path.moveTo(size.width * 0.55, 0);
+    path.lineTo(size.width * 0.2, size.height * 0.6);
+    path.lineTo(size.width * 0.42, size.height * 0.6);
+    path.lineTo(size.width * 0.35, size.height);
+    path.lineTo(size.width * 0.8, size.height * 0.4);
+    path.lineTo(size.width * 0.55, size.height * 0.4);
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _LightningPainter old) => old.color != color;
+}
+
+/// 充电粒子
 class _ParticlesPainter extends CustomPainter {
   final double progress;
   _ParticlesPainter({required this.progress});
