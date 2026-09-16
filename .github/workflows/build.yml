@@ -30,7 +30,7 @@ jobs:
         run: flutter pub get
 
       - name: Build release APK (arm64)
-        run: flutter build apk --release --target-platform android-arm64
+        run: flutter build apk --release --target-platform android-arm64 --android-skip-build-dependency-validation
 
       - name: List output
         run: ls -la build/app/outputs/flutter-apk/
