@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -49,7 +50,7 @@ class _LockScreenState extends State<LockScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   // ---- time ----
   DateTime _now = DateTime.now();
-  late final Ticker _ticker;
+  late final Timer _timer;
 
   // ---- battery ----
   final Battery _battery = Battery();
@@ -76,11 +77,10 @@ class _LockScreenState extends State<LockScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // clock ticker
-    _ticker = createTicker((_) {
+    // clock timer (update every second)
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
-    _ticker.start();
 
     // snap-back controller
     _snapController = AnimationController(
@@ -120,7 +120,7 @@ class _LockScreenState extends State<LockScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _ticker.dispose();
+    _timer.cancel();
     _snapController.dispose();
     _chargeGlowController.dispose();
     super.dispose();
