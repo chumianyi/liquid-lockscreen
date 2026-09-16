@@ -17,7 +17,7 @@ assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
 
 android {
     namespace = "com.liquid.lock"
-    compileSdk = 34
+    compileSdk = 36
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
